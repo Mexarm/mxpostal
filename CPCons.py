@@ -4,6 +4,7 @@
 import pandas as pd
 from simpledbf import Dbf5
 from slugify import slugify
+import postal_utils
 
 def df_load_from_dbf(path_to_dbf,codec):
     return Dbf5(path_to_dbf, codec=codec).to_dataframe()
@@ -67,30 +68,95 @@ def get_asentamiento_by_cp(codigo_postal, cpcons):
     c3 = (cod['COR'] == codigo_postal) 
     return cod[ c1 | c2 | c3 ]
 
-def cp_edo_corresponde(codigo_postal,line, cpcons):
-    if not cp_is_valid(codigo_postal,cpcons): return False
+# def cp_edo_corresponde(codigo_postal,line, cpcons):
+#     if not cp_is_valid(codigo_postal,cpcons): return False
+#     estado = get_estado_by_cp(codigo_postal,cpcons)
+#     if slugify(list(estado['NOMBRE'])[0]) in slugify(line): return True
+#     if slugify(list(estado['EDO1'])[0]) in slugify(line): return True
+#     return False
+
+def cp_edo_corresponde(codigo_postal,line, cpcons, allow_not_valid_cp = True):
+    if not cp_is_valid(codigo_postal,cpcons) and not allow_not_valid_cp: return False
     estado = get_estado_by_cp(codigo_postal,cpcons)
-    if slugify(list(estado['NOMBRE'])[0]) in slugify(line): return True
-    if slugify(list(estado['EDO1'])[0]) in slugify(line): return True
+    if len(list(estado['NOMBRE'])) == 0: return False
+    estado_=list(estado['NOMBRE'])[0]
+    estado_common = postal_utils.estado_to_common_name(estado_)
+    s_estado = slugify(estado_)
+    s_edo = slugify(list(estado['EDO1'])[0])
+    s_line = slugify(line)
+    if s_estado in s_line: return estado_common
+    if s_edo in s_line: return estado_common
+    if s_line in s_estado: return estado_common
+    if s_line in s_edo: return estado_common
+    resolved_alias = postal_utils.alias_to_cve_estado(line)
+    if resolved_alias and s_estado in slugify(resolved_alias): return estado_common
     return False
 
-def cp_ciudad_mun_corresponde(codigo_postal,line,cpcons):
+def cp_mun_corresponde(codigo_postal,line,cpcons):
     if not cp_is_valid(codigo_postal,cpcons): return False
-    cdmun = list(get_ciudad_by_cp(codigo_postal,cpcons)['NOMBRE']) + \
-            list(get_municipio_by_cp(codigo_postal,cpcons)['NOMBRE'])
-    for cdm in cdmun:
-        if slugify(cdm) in slugify(line):
-            return True
+    mun = list(get_municipio_by_cp(codigo_postal,cpcons)['NOMBRE'])
+    if len(mun)>1:
+        raise ValueError('more than 1 municipio for cp {}'.format(codigo_postal))
+
+    for m in mun:
+        if slugify(m) in slugify(line):
+            return m
+        if len(line.strip())>6 and slugify(line) in slugify(m):
+            return m
     return False
+
+def cp_ciudad_corresponde(codigo_postal,line,cpcons):
+    if not cp_is_valid(codigo_postal,cpcons): return False
+    cd = list(get_ciudad_by_cp(codigo_postal,cpcons)['NOMBRE']) 
+    if len(cd)>1:
+        raise ValueError('more than 1 ciudad for cp {}'.format(codigo_postal))
+
+    for c in cd:
+        if slugify(c) in slugify(line):
+            return c
+        if len(line.strip())>6 and slugify(line) in slugify(c):
+            return c
+    return False
+
+def match_backwards_in_list(fldlist, codigo_postal, cpcons, fn):
+    for i,fld in enumerate(reversed(fldlist)):
+        match = fn(codigo_postal,fld,cpcons)
+        if match:
+            return (match,fldlist[:-(i+1)])
+    return False
+
+# def cp_asentamiento_corresponde(codigo_postal,line, cpcons):
+#     if not cp_is_valid(codigo_postal,cpcons): return False
+#     asentamientos = get_asentamiento_by_cp(codigo_postal,cpcons)
+#     line_ = slugify(line)
+#     if 'col-' in line_ or 'colonia-' in line_ :
+#         line_ = line_.replace('col-','')
+#         line_ = line_.replace('colonia-','')
+#     matches1 = []
+#     matches2 = []
+#     for col in list(asentamientos['USUARIO']):
+#         col_ = slugify(col)
+#         if col_ in line_:
+#             matches1.append(col)
+#         if line_ in col_:
+#             matches2.append(col)
+#     if len(matches1):
+#         return max(matches1, key=len)
+#     if len(matches2):
+#         return max(matches2, key=len)
+#     return False
 
 def cp_asentamiento_corresponde(codigo_postal,line, cpcons):
     if not cp_is_valid(codigo_postal,cpcons): return False
     asentamientos = get_asentamiento_by_cp(codigo_postal,cpcons)
+    line_ = slugify(line)
+    if 'col-' in line_ or 'colonia-' in line_ :
+        line_ = line_.replace('col-','')
+        line_ = line_.replace('colonia-','')
     for col in list(asentamientos['USUARIO']):
-        if slugify(col) in slugify(line):
-            return True
+        if slugify(col) in line_:
+            return col
     return False
-
 
 def cp_is_valid(codigo_postal,cpcons):
     if not codigo_postal: return
@@ -98,3 +164,9 @@ def cp_is_valid(codigo_postal,cpcons):
         codigo_postal = int(codigo_postal)
     cod = cpcons['codigo']
     return len(cod[cod['CODIGO'] == codigo_postal]) > 0
+
+def determina_asentamiento_from_cp(codigo_postal,cpcons):
+    asentamientos = get_asentamiento_by_cp(codigo_postal,cpcons)
+    if len(asentamientos) == 1:
+        return asentamientos.iloc[0]['USUARIO']
+    return False # no se puede deteminar debido a que no existen o son varios asentamientos para ese codigo postal

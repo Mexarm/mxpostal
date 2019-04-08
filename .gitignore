@@ -1,0 +1,8 @@
+bin/
+include/
+lib/
+share/
+*.csv
+*.xlsx
+*.F0.*
+*.pyc
